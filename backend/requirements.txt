@@ -1,0 +1,13 @@
+# Web Framework & Server
+fastapi==0.111.0
+uvicorn==0.30.1
+pydantic==2.7.4
+pydantic-settings==2.3.4
+
+# HTTP Client (để gọi LocalAI API và tải ảnh/âm thanh)
+# httpx==0.27.0
+
+# Anki Package Generation
+# genanki==0.13.0
+
+python-dotenv==1.0.1
