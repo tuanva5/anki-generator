@@ -32,19 +32,25 @@ The pipeline is optimized for **Apple M4 with 32GB Unified Memory**, balancing h
 anki-generator-server/
 ├── backend/                # FastAPI Application
 │   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py         # Server entrypoint & FastAPI initialization
+│   │   ├── main.py         # Server entrypoint, startup cleanup & FastAPI initialization
 │   │   ├── config.py       # Environment variable parsing & settings
-│   │   ├── schemas/        # Pydantic schemas for data validation
-│   │   │   └── card.py
+│   │   ├── database.py     # SQLite engine, session dependency, startup/expiry cleanup
+│   │   ├── models/         # SQLModel tables (Batch, Card) and status rules
+│   │   │   └── flashcard.py
+│   │   ├── schemas/        # Pydantic request/response schemas and word validation
+│   │   │   └── flashcard.py
 │   │   ├── services/       # Business logic layer
-│   │   │   ├── ai_service.py   # LocalAI client (Qwen JSON & SD image)
-│   │   │   └── anki_service.py # Card package builder using genanki
+│   │   │   ├── ai_service.py        # LocalAI client (Qwen JSON & SD image)
+│   │   │   ├── anki_service.py      # Deck builder using genanki
+│   │   │   ├── flashcard_service.py # Batch rules, background generation, regeneration
+│   │   │   └── storage.py           # Image/export file paths on disk
 │   │   └── routes/         # REST API endpoints
-│   │       └── generator.py# Creation, review, and regeneration routes
-│   ├── exports/            # Local directory where generated .apkg files are saved
+│   │       └── flashcard.py
+│   ├── tests/              # pytest suite (AI service is mocked)
+│   ├── exports/            # Local directory where generated images and .apkg files are saved
 │   ├── .env.example        # Template for backend environment variables
-│   └── requirements.txt    # Python package dependencies
+│   ├── requirements.txt    # Python package dependencies
+│   └── requirements-dev.txt # Adds pytest
 │
 ├── frontend/               # Vue 3 Single Page Application (Vite)
 │   ├── src/
@@ -87,6 +93,10 @@ cp .env.example .env
 
 # Start your backend server
 uvicorn app.main:app --reload --port 8000
+
+# Run the tests (optional)
+pip install -r requirements-dev.txt
+pytest
 ```
 
 ### 3. Frontend Installation (Vue 3 + Vite)
@@ -102,6 +112,23 @@ npm install
 npm run dev
 ```
 *The web interface will typically be available at `http://localhost:5173`.*
+
+---
+
+## Backend API
+
+Bodies for adding words are `{"words": ["apple", "pear"]}`. Only one batch exists at a time: adding words appends to it (duplicates are skipped), is rejected with 409 while the batch is still generating, and clears any expiry countdown. The countdown (`RETENTION_HOURS`, default 24h) starts at the first download; after it the batch, images and export are deleted.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /flashcards/batch` | Add words to the current batch (created if none) and generate in the background (202). Returns `batch_id`, `added`, `skipped`. |
+| `POST /flashcards/batch/upload` | Same, from a UTF-8 file (multipart field `file`): `.csv` uses the first column (a `word` header is skipped), any other file is one word or phrase per line. |
+| `GET /flashcards/batch/current` | The current batch (404 if none). 202 with per-card status while processing or if some failed, 200 with full cards once all are done. `expires_at` is null until first download. |
+| `GET /flashcards/batch/{batch_id}` | Same payload for a specific batch id. |
+| `GET /flashcards/batch/current/download` | Build and download the `.apkg` from server-stored data (409 unless every card is complete). The first call starts the expiry countdown. |
+| `PATCH /flashcards/batch/{batch_id}/card/{card_id}` | Regenerate with AI. Body `{"target": "example" \| "image" \| "all", "instruction": "..."}`, both optional (default `example`). `image` reuses the stored image prompt, rewritten by the AI first if an instruction is given; a failed card is always regenerated fully. The card is `PROCESSING` meanwhile. |
+| `DELETE /flashcards/batch/{batch_id}/card/{card_id}` | Remove a card from the batch. |
+| `GET /flashcards/batch/{batch_id}/card/{card_id}/image` | Card illustration. |
 
 ---
 
